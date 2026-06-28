@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 INSTRUCTIONS = """
@@ -21,6 +22,15 @@ CONTEXT:
 """.strip()
 
 DEFAULT_MODEL = "gpt-5.4-mini"
+
+
+@dataclass
+class RAGResult:
+    """Container for the answer text and token-usage metadata."""
+
+    answer: str
+    input_tokens: int
+    search_results: list[dict[str, Any]]
 
 
 class RAGBase:
@@ -82,17 +92,42 @@ class RAGBase:
             {"role": "user", "content": prompt},
         ]
 
-    def llm(self, prompt: str) -> str:
-        """Generate a response from the configured LLM client."""
-        response = self.llm_client.responses.create(
+    @staticmethod
+    def _extract_input_tokens(response: Any) -> int:
+        """Read the prompt token count from a response object."""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return 0
+
+        if isinstance(usage, dict):
+            for key in ("input_tokens", "prompt_tokens"):
+                value = usage.get(key)
+                if value is not None:
+                    return int(value)
+            return 0
+
+        for key in ("input_tokens", "prompt_tokens"):
+            value = getattr(usage, key, None)
+            if value is not None:
+                return int(value)
+
+        return 0
+
+    def llm(self, prompt: str) -> Any:
+        """Generate a response object from the configured LLM client."""
+        return self.llm_client.responses.create(
             model=self.model,
             input=self._build_input_messages(prompt),
         )
-        return response.output_text
 
-    def rag(self, query: str) -> str:
+    def rag(self, query: str) -> RAGResult:
         """Run the complete retrieval-augmented generation flow."""
         search_results = self.search(query)
         prompt = self.build_prompt(query, search_results)
-        return self.llm(prompt)
+        response = self.llm(prompt)
+        return RAGResult(
+            answer=response.output_text,
+            input_tokens=self._extract_input_tokens(response),
+            search_results=search_results,
+        )
         
